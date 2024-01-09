@@ -1,69 +1,14 @@
+from db import db
 import pandas as pd
-import datetime as dt
-import os
 import dash
 import dash_core_components as dcc
 import dash_html_components as html
-from datetime import datetime, date
-from dateutil import relativedelta
 from dash.dependencies import Input, Output
 import dash_auth
 import plotly.graph_objects as go
 import tab1
 import tab2
 import tab3
-
-
-class db:
-    def __init__(self):
-        self.transactions = db.transation_init()
-        self.cc = pd.read_csv(r'db/country_codes.csv', index_col=0)
-        self.customers = pd.read_csv(r'db/customers.csv', index_col=0)
-        self.cat_prod_info = pd.read_csv(r'db/prod_cat_info.csv')
-
-    @staticmethod
-    def transation_init():
-        transactions = pd.DataFrame()
-        src = r'db/transactions'
-        for filename in os.listdir(src):
-            transactions = pd.concat(
-                [pd.read_csv(os.path.join(src, filename), index_col=0)])
-
-        def convert_dates(x):
-            try:
-                return dt.datetime.strptime(x, '%d-%m-%Y')
-            except:
-                return dt.datetime.strptime(x, '%d/%m/%Y')
-
-        transactions['tran_date'] = transactions['tran_date'].apply(
-            lambda x: convert_dates(x))
-
-        return transactions
-
-    def merge(self):
-        df = self.transactions.join(self.cat_prod_info.drop_duplicates(subset=['prod_cat_code'])
-                                    .set_index('prod_cat_code')['prod_cat'], on='prod_cat_code', how='left')
-
-        df = df.join(self.cat_prod_info.drop_duplicates(subset=['prod_sub_cat_code'])
-                     .set_index('prod_sub_cat_code')['prod_subcat'], on='prod_subcat_code', how='left')
-
-        df = df.join(self.customers.join(
-            self.cc, on='country_code').set_index('customer_Id'), on='cust_id')
-
-        df['DOB'].dropna(inplace=True)
-        df['age'] = df.apply(lambda row: self.calculate_age(row), axis=1)
-
-        self.merged = df
-
-    def calculate_age(self, row):
-        str_d1 = row['DOB']
-        str_d2 = datetime.strftime(date.today(), "%d-%m-%Y")
-
-        d1 = datetime.strptime(str_d1, "%d-%m-%Y")
-        d2 = datetime.strptime(str_d2, "%d-%m-%Y")
-
-        delta = relativedelta.relativedelta(d2, d1)
-        return delta.years
 
 
 df = db()
@@ -98,6 +43,8 @@ def render_content(tab):
         return tab3.render_tab(df.merged)
 
 # tab1 callbacks
+
+
 @app.callback(Output('bar-sales', 'figure'),
               [Input('sales-range', 'start_date'), Input('sales-range', 'end_date')])
 def tab1_bar_sales(start_date, end_date):
@@ -138,6 +85,8 @@ def tab1_choropleth_sales(start_date, end_date):
     return fig
 
 # tab2 callbacks
+
+
 @app.callback(Output('barh-prod-subcat', 'figure'),
               [Input('prod_dropdown', 'value')])
 def tab2_barh_prod_subcat(chosen_cat):
@@ -156,27 +105,59 @@ def tab2_barh_prod_subcat(chosen_cat):
     return fig
 
 # tab3 callbacks
-@app.callback(Output('age-customers-bar', 'figure'),
-              [Input('age-customers-range', 'value')])
-def tab3_age_customer_hist(values):
- 
-    truncated = df.merged[(df.merged['age'] >= values[0]) & (
-        df.merged['age'] <= values[1])]
 
-    grouped_customers_age=truncated[truncated['total_amt']>0].pivot_table(values='total_amt', columns=truncated['age'],index=truncated['Store_type'], aggfunc=sum)
+
+@app.callback(Output('age-customers-bar', 'figure'),
+              [Input('age-customers-range', 'value'), Input('store_type_dropdown', 'value')])
+def tab3_age_customer_data(values, store_type_chosen):
+
+    store_types_color = {
+        "Flagship store": "red",
+        "MBR": "green",
+        "e-Shop": "blue",
+        "TeleShop": "gray",
+    }
+    truncated = df.merged[(df.merged['age'] >= values[0]) & (
+        df.merged['age'] <= values[1]) & (df.merged['Store_type'] == store_type_chosen)]
+
+    grouped_customers_age = truncated[truncated['total_amt'] > 0].pivot_table(
+        values='total_amt', columns=truncated['age'], index=truncated['Store_type'], aggfunc=sum)
 
     fig_customers_age = go.Figure(data=[
-        go.Bar(name='Flagship store', x=grouped_customers_age.columns,
-               y=[value for value in grouped_customers_age.values[0]]),
-        go.Bar(name='MBR', x=grouped_customers_age.columns, y=[
-               value for value in grouped_customers_age.values[1]]),
-        go.Bar(name='TeleShop', x=grouped_customers_age.columns, y=[
-               value for value in grouped_customers_age.values[2]]),
-        go.Bar(name='e-Shop', x=grouped_customers_age.columns,
-               y=[value for value in grouped_customers_age.values[3]])
-    ], layout=go.Layout(title='Sprzedaź w poszcz. kanałach sprzedazy z uwzglednieniem wieku klientów'))
+        go.Bar(name=store_type_chosen, x=grouped_customers_age.columns,
+               y=[value for value in grouped_customers_age.values[0]], marker_color=store_types_color[store_type_chosen])
+    ], layout=go.Layout(title='Sprzedaź w wybranym kanale sprzedazy z uwzglednieniem wieku klientów'))
+
+    fig_customers_age.update_layout(showlegend=True)
 
     return fig_customers_age
+
+
+@app.callback(Output('channel-sales-customers', 'figure'),
+              [Input('store_type_dropdown', 'value')])
+def tab3_customers_sex_sales_channel(store_type_chosen):
+
+    store_types_color = {
+        "Flagship store": "red",
+        "MBR": "green",
+        "e-Shop": "blue",
+        "TeleShop": "gray",
+    }
+
+    truncated = df.merged[df.merged['Store_type'] == store_type_chosen]
+
+    grouped_customers = truncated[truncated['total_amt'] > 0].pivot_table(
+        values='total_amt', columns=truncated['Gender'], index=truncated['Store_type'], aggfunc=sum)
+
+    fig_customers = go.Figure(data=[
+        go.Bar(name=store_type_chosen, x=grouped_customers.columns,
+               y=[value for value in grouped_customers.values[0]], marker_color=store_types_color[store_type_chosen])
+    ], layout=go.Layout(title='Sprzedaź w wybranym kanale sprzedazy z uwzglednieniem płci klientów'))
+
+    fig_customers.update_layout(showlegend=True)
+
+    return fig_customers
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)
